@@ -17,13 +17,6 @@ import chisel3.experimental.FixedPoint
 import chisel3.util._
 import chisel3.util.{Decoupled, Counter}
 import dsptools.numbers._
-import freechips.rocketchip.diplomacy.LazyModule
-import freechips.rocketchip.subsystem.BaseSubsystem
-
-import freechips.rocketchip.regmapper._
-import freechips.rocketchip.tilelink.TLRegisterNode
-import freechips.rocketchip.config.Parameters
-import freechips.rocketchip.diplomacy._
 
 import chisel3.experimental._
 import chisel3.ExplicitCompileOptions
@@ -111,44 +104,3 @@ class Tail[T <: Data : RealBits : BinaryRepresentation : Real](val params: TailP
   UnscrambleModule.out.ready := io.signalOut.ready
 }
 
-class LazyTail(val config: FixedTailParams)(implicit p: Parameters) extends LazyModule {
-  val device = new SimpleDevice("fft-generator", Seq("cpu")) // add an entry to the DeviceTree in the BootROM so that it can be read by a Linux driver (9.2 chipyard docs)
-  val node = TLRegisterNode(
-    address = Seq(AddressSet(config.baseAddress, 0xff)), // (base address + size) of regmap
-    device = device,
-    beatBytes = 8, // specifies interface width in bytes -- since we're connected to a 64bit bus, want an 8byte width (default is 4)
-    concurrency = 1 // size of the internal queue for TileLink requests, must be >0 for decoupled requests and responses (9.4 chipyard docs)
-  )
-
-  lazy val module = new LazyModuleImp(this) {
-    val tail = Module(new Tail(config))
-
-    val inputWire = Wire(Decoupled(UInt((config.IOWidth * 2).W)))
-    inputWire.ready := tail.io.signalIn.ready
-    tail.io.signalIn.bits := inputWire.bits.asTypeOf(config.protoIn)
-    tail.io.signalIn.valid := inputWire.valid
-
-    val outputRegs = tail.io.signalOut.bits.map(b => RegEnable(b.asUInt(), 0.U, tail.io.signalOut.valid))
-
-    var regMap = new ListBuffer[(Int, Seq[freechips.rocketchip.regmapper.RegField])]()
-    regMap += (0x00 -> Seq(RegField.w(config.IOWidth * 2, inputWire)))
-
-    for (i <- 0 until config.n) {
-      regMap += (0x00 + (i+1) * 8 -> Seq(RegField.r(config.IOWidth * 2, outputRegs(i))))
-    }
-
-    tail.io.signalOut.ready := true.B
-
-    node.regmap((regMap.toList):_*)
-  }
-
-}
-
-trait CanHavePeripheryFFT extends BaseSubsystem {
-  if (!p(FFTEnableKey).isEmpty) {
-    // instantiate tail chain
-    val tailChain = LazyModule(new LazyTail(p(FFTEnableKey).get))
-    // connect memory interfaces to pbus
-    pbus.toVariableWidthSlave(Some("tailWrite")) { tailChain.node }
-  }
-}

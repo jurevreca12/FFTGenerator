@@ -11,8 +11,6 @@ import chisel3.util.Decoupled
 import chisel3.util._
 import dspjunctions._
 import dsptools.numbers._
-import freechips.rocketchip.diplomacy.LazyModule
-import freechips.rocketchip.subsystem.BaseSubsystem
 import scala.math.sqrt
 
 /**
